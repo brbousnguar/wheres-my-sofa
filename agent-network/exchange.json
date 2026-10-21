@@ -1,0 +1,63 @@
+{
+  "main": "agent-network.yaml",
+  "name": "Where's my sofa? Customer care network",
+  "classifier": "agentic-network",
+  "groupId": "${organizationId}",
+  "assetId": "wheres-my-sofa-care-network",
+  "version": "1.0.0",
+  "descriptorVersion": "1.0.0",
+  "apiVersion": "v1",
+  "description": "A care-desk broker for a made-to-order furniture shop: it classifies each customer message, then answers order status, moves deliveries or opens care cases through a Mule MCP server over the shop's System API.",
+  "tags": [
+    "customer-care",
+    "mcp",
+    "a2a",
+    "retail"
+  ],
+  "dependencies": [
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "client-id-enforcement",
+      "version": "1.3.4"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "rate-limiting",
+      "version": "1.5.1"
+    },
+    {
+      "groupId": "68ef9520-24e9-4cf2-b2f5-620025690913",
+      "assetId": "user-context-propagation",
+      "version": "1.0.1"
+    }
+  ],
+  "metadata": {
+    "toolingVersion": 1,
+    "variables": {
+      "sofaCareMcp": {
+        "url": {
+          "description": "Base URL of the sofa-care-mcp app (the broker calls <url>/mcp)",
+          "default": "",
+          "secret": false
+        },
+        "apiKey": {
+          "description": "The x-api-key the MCP server expects. Inject at deploy time, never commit a value.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "openRouter": {
+        "apiKey": {
+          "description": "OpenRouter API key. Inject at deploy time, never commit a value.",
+          "default": "",
+          "secret": true
+        }
+      },
+      "OBJECT_STORE_DEFAULT_TTL_MS": {
+        "description": "How long a conversation (contextId) is remembered",
+        "default": "86400000",
+        "secret": false
+      }
+    }
+  }
+}

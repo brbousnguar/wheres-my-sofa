@@ -1,0 +1,12 @@
+# Local defaults. scripts/deploy-apps.sh overrides them on CloudHub 2.0
+# (port 8081, the System API's public host over HTTPS, and both keys as secure properties).
+mcp:
+  port: "8721"
+  # Clients send it in x-api-key when they open an MCP session.
+  key: "local-mcp-key"
+
+sapi:
+  protocol: "HTTP"
+  host: "localhost"
+  port: "8720"
+  key: "local-dev-key"

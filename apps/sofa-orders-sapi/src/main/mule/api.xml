@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+  <!-- System API over the (mock) ERP: orders, workshop production, deliveries, care cases. -->
+
+  <flow name="get-health">
+    <http:listener config-ref="api-http" path="/api/health" allowedMethods="GET"/>
+    <set-payload value='#[output application/json --- { status: "UP", app: "sofa-orders-sapi" }]'/>
+  </flow>
+
+  <flow name="get-orders">
+    <http:listener config-ref="api-http" path="/api/orders" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+      <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+      </http:error-response>
+    </http:listener>
+    <flow-ref name="require-api-key"/>
+    <set-variable variableName="email" value="#[attributes.queryParams.email]"/>
+    <flow-ref name="require-email"/>
+    <flow-ref name="load-state"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from dw::sofa
+output application/json
+---
+{
+  orders: ordersOf(vars.email) map summaryOut($, vars.state.rebookings)
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <error-handler ref="api-error-handler"/>
+  </flow>
+
+  <flow name="get-order">
+    <http:listener config-ref="api-http" path="/api/orders/{orderId}" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+      <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+      </http:error-response>
+    </http:listener>
+    <flow-ref name="require-api-key"/>
+    <set-variable variableName="orderId" value="#[attributes.uriParams.orderId]"/>
+    <set-variable variableName="email" value="#[attributes.queryParams.email]"/>
+    <flow-ref name="load-owned-order"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from dw::sofa
+output application/json
+---
+orderOut(vars.order, vars.state.rebookings)]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <error-handler ref="api-error-handler"/>
+  </flow>
+
+  <flow name="get-delivery-slots">
+    <http:listener config-ref="api-http" path="/api/orders/{orderId}/delivery-slots" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+      <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+      </http:error-response>
+    </http:listener>
+    <flow-ref name="require-api-key"/>
+    <set-variable variableName="orderId" value="#[attributes.uriParams.orderId]"/>
+    <set-variable variableName="email" value="#[attributes.queryParams.email]"/>
+    <flow-ref name="load-owned-order"/>
+    <flow-ref name="require-reschedulable"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from dw::sofa
+output application/json
+---
+{
+  orderId: vars.order.orderId,
+  currentSlot: slotOut(currentSlot(vars.order, vars.state.rebookings)),
+  freeSlots: freeSlots(vars.order, vars.state.rebookings) map slotOut($)
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <error-handler ref="api-error-handler"/>
+  </flow>
+
+  <flow name="put-delivery">
+    <http:listener config-ref="api-http" path="/api/orders/{orderId}/delivery" allowedMethods="PUT">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+      <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+      </http:error-response>
+    </http:listener>
+    <flow-ref name="require-api-key"/>
+    <set-variable variableName="orderId" value="#[attributes.uriParams.orderId]"/>
+    <set-variable variableName="email" value="#[payload.email]"/>
+    <set-variable variableName="slotId" value="#[upper(trim(payload.slotId default ''))]"/>
+    <flow-ref name="load-owned-order"/>
+    <flow-ref name="require-reschedulable"/>
+    <choice>
+      <when expression="#[import * from dw::sofa --- isEmpty(freeSlots(vars.order, vars.state.rebookings) filter ($.slotId == vars.slotId))]">
+        <raise-error type="APP:CONFLICT" description="That slot isn't free for this order. List the free slots first."/>
+      </when>
+    </choice>
+    <os:store key="state" objectStore="state-store">
+      <os:value><![CDATA[#[output application/java --- vars.state update { case r at .rebookings -> r ++ { (vars.order.orderId): vars.slotId } }]]]></os:value>
+    </os:store>
+    <flow-ref name="load-state"/>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+import * from dw::sofa
+output application/json
+---
+{
+  orderId: vars.order.orderId,
+  rescheduled: true,
+  delivery: deliveryOut(vars.order, vars.state.rebookings)
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+    <error-handler ref="api-error-handler"/>
+  </flow>
+
+  <sub-flow name="require-reschedulable">
+    <choice>
+      <when expression="#[vars.order.delivery.status != 'BOOKED']">
+        <raise-error type="APP:CONFLICT" description="#['This order has no delivery booked yet (status $(vars.order.delivery.status)), so there is nothing to move.']"/>
+      </when>
+      <when expression="#[import * from dw::sofa --- not canReschedule(vars.order, vars.state.rebookings)]">
+        <raise-error type="APP:CONFLICT" description="The delivery is less than 48 hours away and can no longer be moved online."/>
+      </when>
+    </choice>
+  </sub-flow>
+
+  <flow name="post-case">
+    <http:listener config-ref="api-http" path="/api/cases" allowedMethods="POST">
+      <http:response statusCode="#[vars.httpStatus default 201]"/>
+      <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+      </http:error-response>
+    </http:listener>
+    <flow-ref name="require-api-key"/>
+    <set-variable variableName="request" value="#[payload]"/>
+    <set-variable variableName="orderId" value="#[payload.orderId]"/>
+    <set-variable variableName="email" value="#[payload.email]"/>
+    <flow-ref name="load-owned-order"/>
+    <choice>
+      <when expression="#[not (['DAMAGE', 'DELAY', 'DELIVERY', 'OTHER'] contains upper(vars.request.category default ''))]">
+        <raise-error type="APP:BAD_REQUEST" description="category must be DAMAGE, DELAY, DELIVERY or OTHER."/>
+      </when>
+      <when expression="#[isEmpty(trim(vars.request.summary default ''))]">
+        <raise-error type="APP:BAD_REQUEST" description="A summary of the customer's request is required."/>
+      </when>
+    </choice>
+    <set-variable variableName="careCase" value="#[%dw 2.0
+output application/java
+---
+{
+  caseId: 'CARE-' ++ ((1001 + sizeOf(vars.state.cases)) as String),
+  status: 'OPEN',
+  orderId: vars.order.orderId,
+  customerName: vars.order.customer.name,
+  category: upper(vars.request.category),
+  summary: vars.request.summary,
+  openedAt: now() as String {format: &quot;yyyy-MM-dd'T'HH:mm:ssXXX&quot;},
+  assignedTo: 'Customer care, ' ++ vars.order.store,
+  replyWithin: '1 business day'
+}]"/>
+    <os:store key="state" objectStore="state-store">
+      <os:value><![CDATA[#[output application/java --- vars.state update { case c at .cases -> c ++ [vars.careCase] }]]]></os:value>
+    </os:store>
+    <set-payload value="#[output application/json --- vars.careCase]"/>
+    <error-handler ref="api-error-handler"/>
+  </flow>
+
+  <flow name="get-cases">
+    <http:listener config-ref="api-http" path="/api/cases" allowedMethods="GET">
+      <http:response statusCode="#[vars.httpStatus default 200]"/>
+      <http:error-response statusCode="#[vars.httpStatus default 500]">
+        <http:body><![CDATA[#[payload]]]></http:body>
+      </http:error-response>
+    </http:listener>
+    <flow-ref name="require-api-key"/>
+    <flow-ref name="load-state"/>
+    <set-payload value="#[output application/json --- { cases: vars.state.cases }]"/>
+    <error-handler ref="api-error-handler"/>
+  </flow>
+
+</mule>

@@ -1,0 +1,118 @@
+agentNetwork: 2.0.0
+info:
+  label: "Where's my sofa? Customer care network"
+  version: v1
+registry:
+  mcps:
+    sofaCareMcp:
+      info:
+        label: Sofa Care MCP Server
+        description: Order, workshop production, delivery and care-case tools over the shop's System API (a Mule app).
+      metadata:
+        transport:
+          kind: streamableHttp
+          path: /mcp
+  llms:
+    openRouter:
+      info:
+        label: OpenRouter
+        description: OpenAI-compatible Responses API, so the broker can use any model OpenRouter serves.
+      metadata:
+        platform: OpenAI
+context:
+  connections:
+    sofa_care_mcp_connection:
+      kind: mcp
+      ref:
+        name: sofaCareMcp
+      url: ${sofaCareMcp.url}
+      authentication:
+        kind: apiKey
+        headerName: x-api-key
+        apiKey: ${sofaCareMcp.apiKey}
+    openrouter_connection:
+      kind: llm
+      ref:
+        name: openRouter
+      url: https://openrouter.ai/api/v1
+      authentication:
+        kind: apiKey
+        apiKey: ${openRouter.apiKey}
+  # Inbound policies for the broker, applied by Omni Gateway in this order.
+  policies:
+    clientIdEnforcement:
+      ref:
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        name: client-id-enforcement
+      configuration:
+        credentialsOriginHasHttpBasicAuthenticationHeader: customExpression
+        clientIdExpression: "#[attributes.headers['client_id']]"
+        clientSecretExpression: "#[attributes.headers['client_secret']]"
+    rateLimit:
+      ref:
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        name: rate-limiting
+      configuration:
+        keySelector: "#[attributes.headers['client_id']]"
+        rateLimits:
+          - maximumRequests: 60
+            timePeriodInMilliseconds: 3600000
+        exposeHeaders: true
+    userContext:
+      ref:
+        namespace: 68ef9520-24e9-4cf2-b2f5-620025690913
+        name: user-context-propagation
+      configuration:
+        userIdExpression: "#[authentication.clientId]"
+brokers:
+  care_desk:
+    kind: AgentScript
+    implementation: ./brokers/care-desk.agent
+    interfaces:
+      a2a:
+        # Client ID first: user context reads the client it authenticated, and that identity
+        # is what the broker keys conversation memory on.
+        policies:
+          inbound:
+            - ref:
+                name: clientIdEnforcement
+            - ref:
+                name: rateLimit
+            - ref:
+                name: userContext
+        card:
+          name: Care Desk
+          description: Answers furniture customers about made-to-order orders, moves booked deliveries and opens care cases for damage, delays and anything it can't solve.
+          version: 1.0.0
+          capabilities:
+            streaming: false
+            pushNotifications: false
+          defaultInputModes:
+            - text/plain
+          defaultOutputModes:
+            - text/plain
+          skills:
+            - id: order-status
+              name: Order status
+              description: Where an order is, including workshop production and delays on made-to-order pieces.
+              tags:
+                - orders
+                - customer-care
+              examples:
+                - "Where is my sofa? Order SO-24817, camille.martin@example.com"
+            - id: delivery-change
+              name: Move a delivery
+              description: Moves a booked delivery to a free slot, at least 48 hours ahead.
+              tags:
+                - delivery
+                - customer-care
+              examples:
+                - "Can you move the delivery of SO-24903 to a Saturday morning? julien.bernard@example.com"
+            - id: care-case
+              name: Report a problem
+              description: Opens a case for the care team, for damage on delivery or a delay to follow up.
+              tags:
+                - complaints
+                - customer-care
+              examples:
+                - "My Halo table arrived scratched. SO-24655, sofia.rossi@example.com"

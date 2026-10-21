@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+  <configuration-properties file="config.yaml"/>
+
+  <http:listener-config name="api-http">
+    <http:listener-connection host="0.0.0.0" port="${sapi.port}"/>
+  </http:listener-config>
+
+  <!-- Rebookings and care cases. In memory on purpose: a restart resets the demo. -->
+  <os:object-store name="state-store" persistent="false"/>
+
+  <sub-flow name="require-api-key">
+    <choice>
+      <when expression="#[attributes.headers.'x-api-key' != p('api.key')]">
+        <raise-error type="APP:UNAUTHORIZED" description="Missing or wrong x-api-key header."/>
+      </when>
+    </choice>
+  </sub-flow>
+
+  <sub-flow name="require-email">
+    <choice>
+      <when expression="#[isEmpty(vars.email)]">
+        <raise-error type="APP:BAD_REQUEST" description="The customer's email is required."/>
+      </when>
+    </choice>
+  </sub-flow>
+
+  <sub-flow name="load-state">
+    <os:retrieve key="state" objectStore="state-store" target="state">
+      <os:default-value><![CDATA[#[{ rebookings: {}, cases: [] }]]]></os:default-value>
+    </os:retrieve>
+  </sub-flow>
+
+  <!-- Finds the order and checks the email owns it. A wrong email gets the same 404 as a missing order,
+       so the API never confirms that an order number exists. -->
+  <sub-flow name="load-owned-order">
+    <flow-ref name="require-email"/>
+    <set-variable variableName="order" value="#[import * from dw::sofa --- rawOrder(vars.orderId)]"/>
+    <choice>
+      <when expression="#[import * from dw::sofa --- not ownedBy(vars.order, vars.email)]">
+        <raise-error type="APP:NOT_FOUND" description="No order with that number for that email."/>
+      </when>
+    </choice>
+    <flow-ref name="load-state"/>
+  </sub-flow>
+
+  <error-handler name="api-error-handler">
+    <on-error-propagate type="APP:UNAUTHORIZED">
+      <set-variable variableName="httpStatus" value="401"/>
+      <flow-ref name="error-body"/>
+    </on-error-propagate>
+    <on-error-propagate type="APP:BAD_REQUEST">
+      <set-variable variableName="httpStatus" value="400"/>
+      <flow-ref name="error-body"/>
+    </on-error-propagate>
+    <on-error-propagate type="APP:NOT_FOUND">
+      <set-variable variableName="httpStatus" value="404"/>
+      <flow-ref name="error-body"/>
+    </on-error-propagate>
+    <on-error-propagate type="APP:CONFLICT">
+      <set-variable variableName="httpStatus" value="409"/>
+      <flow-ref name="error-body"/>
+    </on-error-propagate>
+    <on-error-propagate type="ANY">
+      <set-variable variableName="httpStatus" value="500"/>
+      <flow-ref name="error-body"/>
+    </on-error-propagate>
+  </error-handler>
+
+  <sub-flow name="error-body">
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+  error: lower(error.errorType.identifier default "error"),
+  message: error.description
+}]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </sub-flow>
+
+</mule>

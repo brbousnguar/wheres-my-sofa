@@ -1,0 +1,8 @@
+target/
+.env
+.env.*
+*.log
+.DS_Store
+.mule/
+.build/
+__pycache__/

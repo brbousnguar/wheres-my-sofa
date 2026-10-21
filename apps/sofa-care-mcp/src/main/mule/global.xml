@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:mcp="http://www.mulesoft.org/schema/mule/mcp"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mcp http://www.mulesoft.org/schema/mule/mcp/current/mule-mcp.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd">
+
+  <configuration-properties file="config.yaml"/>
+
+  <http:listener-config name="mcp-http">
+    <http:listener-connection host="0.0.0.0" port="${mcp.port}"/>
+  </http:listener-config>
+
+  <!-- The experience layer for agents: same System API as every other channel, exposed as MCP tools. -->
+  <mcp:server-config name="mcp-server" serverName="sofa-care-mcp" serverVersion="1.0.0">
+    <!-- Connector 1.7+ answers with one JSON body that closes. 1.6 held an SSE stream open for every
+         response, and behind Omni Gateway those open streams stalled the broker's tool discovery. -->
+    <mcp:streamable-http-server-connection listenerConfig="mcp-http" mcpEndpointPath="/mcp"
+                                           responseContentType="JSON"
+                                           requestTimeout="30" requestTimeoutUnit="SECONDS"/>
+  </mcp:server-config>
+
+  <http:request-config name="orders-sapi" basePath="/api" responseTimeout="20000">
+    <http:request-connection protocol="${sapi.protocol}" host="${sapi.host}" port="${sapi.port}"/>
+    <http:default-headers>
+      <http:default-header key="x-api-key" value="${sapi.key}"/>
+    </http:default-headers>
+  </http:request-config>
+
+  <flow name="health">
+    <http:listener config-ref="mcp-http" path="/health" allowedMethods="GET"/>
+    <set-payload value='#[output application/json --- { status: "UP", app: "sofa-care-mcp" }]'/>
+  </flow>
+
+  <!-- Every MCP session must present the shared key. The broker sends it through its connection's
+       apiKey authentication; Omni Gateway can replace this with a client ID policy. -->
+  <flow name="authenticate-session">
+    <mcp:on-new-session-listener config-ref="mcp-server">
+      <mcp:rejection rejectWithStatusCode="#[if (vars.keyOk default false) null else 401]"
+                     rejectWithMessage="Missing or wrong x-api-key header."/>
+    </mcp:on-new-session-listener>
+    <set-variable variableName="keyOk" value="#[%dw 2.0
+var props = payload.additionalProperties default {}
+var sent = (props filterObject ((v, k) -> lower(k as String) == 'x-api-key'))[0]
+---
+sent == p('mcp.key')]"/>
+    <logger level="INFO" message="#['MCP session $(payload.sessionId default &quot;?&quot;) key accepted: $(vars.keyOk)']"/>
+  </flow>
+
+  <!-- Turns a System API answer into a tool result. 4xx/5xx become tool errors carrying the API's own message,
+       so the agent reads "No order with that number for that email." rather than an HTTP stack trace. -->
+  <sub-flow name="sapi-result">
+    <choice>
+      <when expression="#[attributes.statusCode &gt;= 400]">
+        <raise-error type="APP:SAPI_REJECTED" description="#[payload.message default ('System API answered ' ++ attributes.statusCode)]"/>
+      </when>
+    </choice>
+    <ee:transform>
+      <ee:message>
+        <ee:set-payload><![CDATA[%dw 2.0
+output text/plain
+---
+write(payload, "application/json", { indent: false })]]></ee:set-payload>
+      </ee:message>
+    </ee:transform>
+  </sub-flow>
+
+</mule>

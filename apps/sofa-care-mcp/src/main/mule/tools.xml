@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:mcp="http://www.mulesoft.org/schema/mule/mcp"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="
+        http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/mcp http://www.mulesoft.org/schema/mule/mcp/current/mule-mcp.xsd">
+
+  <!-- Five tools, each one call to the System API. The rules (who owns an order, which slots are free,
+       the 48-hour cutoff) live in the API, so no prompt can talk its way around them. -->
+
+  <flow name="tool-find-orders">
+    <mcp:tool-listener config-ref="mcp-server" name="find_orders">
+      <mcp:description>List a customer's orders from the email address they ordered with. Returns each order number, order date, status, items and delivery status. Use it when the customer hasn't given an order number.</mcp:description>
+      <mcp:parameters-schema><![CDATA[{
+        "type": "object",
+        "properties": {
+          "email": { "type": "string", "description": "The email address on the customer's orders." }
+        },
+        "required": ["email"],
+        "additionalProperties": false
+      }]]></mcp:parameters-schema>
+      <mcp:responses>
+        <mcp:text-tool-response-content text="#[payload]"/>
+      </mcp:responses>
+      <mcp:on-error-responses>
+        <mcp:text-tool-response-content text="#[error.description]"/>
+      </mcp:on-error-responses>
+    </mcp:tool-listener>
+    <http:request config-ref="orders-sapi" method="GET" path="/orders">
+      <http:query-params><![CDATA[#[{ email: payload.email }]]]></http:query-params>
+      <http:response-validator>
+        <http:success-status-code-validator values="100..599"/>
+      </http:response-validator>
+    </http:request>
+    <flow-ref name="sapi-result"/>
+  </flow>
+
+  <flow name="tool-get-order">
+    <mcp:tool-listener config-ref="mcp-server" name="get_order">
+      <mcp:description>Get one order in full: every item, the workshop production of made-to-order items (supplier order, stages done and left, promised and estimated ready dates, delay and its reason) and the delivery booking. The email must be the one on the order, otherwise the order is reported as not found.</mcp:description>
+      <mcp:parameters-schema><![CDATA[{
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "Order number, like SO-24817." },
+          "email": { "type": "string", "description": "The email address on the order." }
+        },
+        "required": ["orderId", "email"],
+        "additionalProperties": false
+      }]]></mcp:parameters-schema>
+      <mcp:responses>
+        <mcp:text-tool-response-content text="#[payload]"/>
+      </mcp:responses>
+      <mcp:on-error-responses>
+        <mcp:text-tool-response-content text="#[error.description]"/>
+      </mcp:on-error-responses>
+    </mcp:tool-listener>
+    <http:request config-ref="orders-sapi" method="GET" path="/orders/{orderId}">
+      <http:uri-params><![CDATA[#[{ orderId: payload.orderId }]]]></http:uri-params>
+      <http:query-params><![CDATA[#[{ email: payload.email }]]]></http:query-params>
+      <http:response-validator>
+        <http:success-status-code-validator values="100..599"/>
+      </http:response-validator>
+    </http:request>
+    <flow-ref name="sapi-result"/>
+  </flow>
+
+  <flow name="tool-list-delivery-slots">
+    <mcp:tool-listener config-ref="mcp-server" name="list_delivery_slots">
+      <mcp:description>List the free delivery slots for an order whose delivery is booked and more than 48 hours away. Call it before rescheduling, and offer the customer only these slots.</mcp:description>
+      <mcp:parameters-schema><![CDATA[{
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "Order number, like SO-24903." },
+          "email": { "type": "string", "description": "The email address on the order." }
+        },
+        "required": ["orderId", "email"],
+        "additionalProperties": false
+      }]]></mcp:parameters-schema>
+      <mcp:responses>
+        <mcp:text-tool-response-content text="#[payload]"/>
+      </mcp:responses>
+      <mcp:on-error-responses>
+        <mcp:text-tool-response-content text="#[error.description]"/>
+      </mcp:on-error-responses>
+    </mcp:tool-listener>
+    <http:request config-ref="orders-sapi" method="GET" path="/orders/{orderId}/delivery-slots">
+      <http:uri-params><![CDATA[#[{ orderId: payload.orderId }]]]></http:uri-params>
+      <http:query-params><![CDATA[#[{ email: payload.email }]]]></http:query-params>
+      <http:response-validator>
+        <http:success-status-code-validator values="100..599"/>
+      </http:response-validator>
+    </http:request>
+    <flow-ref name="sapi-result"/>
+  </flow>
+
+  <flow name="tool-reschedule-delivery">
+    <mcp:tool-listener config-ref="mcp-server" name="reschedule_delivery">
+      <mcp:description>Move a booked delivery to one of the free slots from list_delivery_slots. Only call it once the customer has chosen that exact slot.</mcp:description>
+      <mcp:parameters-schema><![CDATA[{
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "Order number, like SO-24903." },
+          "email": { "type": "string", "description": "The email address on the order." },
+          "slotId": { "type": "string", "description": "A slotId returned by list_delivery_slots, like D8-AM." }
+        },
+        "required": ["orderId", "email", "slotId"],
+        "additionalProperties": false
+      }]]></mcp:parameters-schema>
+      <mcp:responses>
+        <mcp:text-tool-response-content text="#[payload]"/>
+      </mcp:responses>
+      <mcp:on-error-responses>
+        <mcp:text-tool-response-content text="#[error.description]"/>
+      </mcp:on-error-responses>
+    </mcp:tool-listener>
+    <http:request config-ref="orders-sapi" method="PUT" path="/orders/{orderId}/delivery">
+      <http:body><![CDATA[#[output application/json --- { email: payload.email, slotId: payload.slotId }]]]></http:body>
+      <http:uri-params><![CDATA[#[{ orderId: payload.orderId }]]]></http:uri-params>
+      <http:response-validator>
+        <http:success-status-code-validator values="100..599"/>
+      </http:response-validator>
+    </http:request>
+    <flow-ref name="sapi-result"/>
+  </flow>
+
+  <flow name="tool-open-care-case">
+    <mcp:tool-listener config-ref="mcp-server" name="open_care_case">
+      <mcp:description>Open a case for the customer-care team: damage on delivery, a delay the customer wants followed up, a delivery that can't be moved online, or anything the other tools can't solve. Returns a case number the customer can quote.</mcp:description>
+      <mcp:parameters-schema><![CDATA[{
+        "type": "object",
+        "properties": {
+          "orderId": { "type": "string", "description": "Order number, like SO-24655." },
+          "email": { "type": "string", "description": "The email address on the order." },
+          "category": { "type": "string", "enum": ["DAMAGE", "DELAY", "DELIVERY", "OTHER"] },
+          "summary": { "type": "string", "description": "What the customer reported and wants, in two or three sentences." }
+        },
+        "required": ["orderId", "email", "category", "summary"],
+        "additionalProperties": false
+      }]]></mcp:parameters-schema>
+      <mcp:responses>
+        <mcp:text-tool-response-content text="#[payload]"/>
+      </mcp:responses>
+      <mcp:on-error-responses>
+        <mcp:text-tool-response-content text="#[error.description]"/>
+      </mcp:on-error-responses>
+    </mcp:tool-listener>
+    <http:request config-ref="orders-sapi" method="POST" path="/cases">
+      <http:body><![CDATA[#[output application/json --- payload]]]></http:body>
+      <http:response-validator>
+        <http:success-status-code-validator values="100..599"/>
+      </http:response-validator>
+    </http:request>
+    <flow-ref name="sapi-result"/>
+  </flow>
+
+</mule>

@@ -1,0 +1,5 @@
+{
+  "minMuleVersion": "4.9.6",
+  "javaSpecificationVersions": ["17"],
+  "secureProperties": ["mcp.key", "sapi.key"]
+}

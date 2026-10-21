@@ -1,0 +1,368 @@
+# @dialect: AGENTFABRIC=1.2
+system:
+  instructions: |
+    You are the care desk of a furniture shop that makes most pieces to order in partner workshops.
+    You answer customers about their orders, move booked deliveries and open cases for the care team.
+    Facts come only from the tools. Never invent a date, a slot, a price or a case number, and never
+    promise what no tool did, such as an email, a call or a refund.
+    Write short, warm, plain replies in the customer's language. No markdown tables.
+
+config:
+  agent_name: "care-desk"
+  default_llm: @llm.fast
+
+llm:
+  fast:
+    target: "llm://openrouter_connection"
+    kind: "OpenAI"
+    # Not Claude: each LLM node after the first in a turn starts on the previous node's answer, an
+    # assistant turn, and Claude refuses that (Claude 5 always, earlier models with an output schema).
+    model: "openai/gpt-5-mini"
+    reasoning_effort: "LOW"
+  # The classifier is the first LLM call of a turn, so its history ends on the customer's message
+  # and Claude can run it. On gpt-5-mini a vague message sometimes ended the task in INPUT_REQUIRED.
+  classifier:
+    target: "llm://openrouter_connection"
+    kind: "OpenAI"
+    model: "anthropic/claude-haiku-5.5"
+    reasoning_effort: "LOW"
+
+# -- ACTIONS: the five tools of the Sofa Care MCP server ----------------------
+actions:
+  find_orders:
+    target: "mcp://sofa_care_mcp_connection"
+    kind: "mcp:tool"
+    tool_name: "find_orders"
+
+  get_order:
+    target: "mcp://sofa_care_mcp_connection"
+    kind: "mcp:tool"
+    tool_name: "get_order"
+
+  list_delivery_slots:
+    target: "mcp://sofa_care_mcp_connection"
+    kind: "mcp:tool"
+    tool_name: "list_delivery_slots"
+
+  reschedule_delivery:
+    target: "mcp://sofa_care_mcp_connection"
+    kind: "mcp:tool"
+    tool_name: "reschedule_delivery"
+
+  open_care_case:
+    target: "mcp://sofa_care_mcp_connection"
+    kind: "mcp:tool"
+    tool_name: "open_care_case"
+
+# -- TRIGGER ------------------------------------------------------------------
+trigger careTrigger:
+  kind: "a2a"
+  target: "brokers://care_desk/a2a"
+  on_message: ->
+    transition to @generator.understandRequest
+
+# -- 1. UNDERSTAND: one LLM call, no tools ------------------------------------
+generator understandRequest:
+  description: "Reads the customer's message and extracts intent, order number and email."
+  label: "Understand request"
+  llm: @llm.classifier
+  system:
+    instructions: |
+      You classify a customer's message to a furniture shop's care desk. Your goal is to fill the
+      fields below, and it is complete once they are filled, whatever the message asks for or lacks.
+      You don't handle the request itself, so you never need more input to finish.
+
+      intent:
+      - "order_status": where an order is, when it will be ready or delivered, why it is late.
+      - "reschedule": move, change or postpone a delivery that is already booked.
+      - "complaint": damage, a missing part, a wrong item, or a delay the customer wants someone to follow up.
+      - "other": anything else, including greetings and questions about products or prices.
+
+      The conversation may have earlier turns. A short follow-up like "Saturday morning then" or
+      "it arrived scratched" continues the request from those turns: keep its intent unless the
+      customer clearly asks for something new, and take the order number and email from the earlier turns
+      when this message doesn't repeat them.
+
+      orderId: the order number, like SO-24817, uppercased. "" when there is none.
+      email: the customer's email address, lowercased. "" when there is none.
+
+      absent: which of the two the message and the earlier turns don't contain: "none", "email",
+      "order_number" or "both".
+
+      category, for complaints: DAMAGE, DELAY, DELIVERY or OTHER. Use OTHER for the other intents.
+      summary: what the customer reports and wants, in one or two sentences, in English.
+      preference: for reschedule only, the day or time the customer asked for, in their words. "" otherwise.
+  # The message is quoted as data to classify, not a request for this node to answer.
+  prompt: ->
+    | Classify this customer message and fill the fields.
+      Message: """{!@request.payload.message.parts[0].text}"""
+  outputs:
+    properties:
+      intent:
+        type: "string"
+        enum:
+          - "order_status"
+          - "reschedule"
+          - "complaint"
+          - "other"
+      orderId:
+        type: "string"
+      email:
+        type: "string"
+      # Not routed on: the router checks orderId and email itself. The field gives the model a place
+      # to record what the message lacks. Without it, the model stopped the task to ask the customer.
+      absent:
+        type: "string"
+        enum:
+          - "none"
+          - "email"
+          - "order_number"
+          - "both"
+      category:
+        type: "string"
+        enum:
+          - "DAMAGE"
+          - "DELAY"
+          - "DELIVERY"
+          - "OTHER"
+      summary:
+        type: "string"
+      preference:
+        type: "string"
+  on_exit: ->
+    transition to @router.intentRouter
+
+# -- 2. ROUTE: deterministic, no LLM ------------------------------------------
+# Routes are checked in order. The graph, not the model, decides what is missing: every intent needs
+# an email, and everything but order status needs an order number. Asked to judge that itself, the
+# model stopped the task to ask the customer, and its reasoning came back as the reply.
+router intentRouter:
+  description: "Sends the request down one path. The model classified; the graph decides."
+  routes:
+    - target: @echo.outOfScope
+      when: @generator.understandRequest.output.intent == "other"
+      label: "Other"
+    - target: @echo.askForDetails
+      when: @generator.understandRequest.output.email == ""
+      label: "No email"
+    - target: @orchestrator.orderStatus
+      when: @generator.understandRequest.output.intent == "order_status"
+      label: "Order status"
+    - target: @echo.askForDetails
+      when: @generator.understandRequest.output.orderId == ""
+      label: "No order number"
+    - target: @executor.openComplaintCase
+      when: @generator.understandRequest.output.intent == "complaint"
+      label: "Complaint"
+    - target: @executor.listSlots
+      when: @generator.understandRequest.output.intent == "reschedule"
+      label: "Reschedule"
+  otherwise:
+    target: @orchestrator.orderStatus
+
+echo outOfScope:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart("I can tell you where an order is, move a booked delivery, or pass a problem to our care team. Send me your order number and the email you ordered with.")]})
+
+echo askForDetails:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart("I can help with that. Please send your order number (it starts with SO-) and the email address you ordered with, in one message.")]})
+
+# -- 3a. ORDER STATUS: read-only tools, the email bound by the graph ----------
+orchestrator orderStatus:
+  description: "Looks up the order and explains where it is."
+  label: "Order status"
+  system:
+    instructions: |
+      Tell the customer where their order is, in a few short sentences of plain prose.
+      If you have no order number, call find_orders and pick the order the message is about.
+      Mention another order only if the message could be about it too, in one line.
+      Call get_order for the full picture. For a made-to-order piece say which workshop stage it is at,
+      the estimated ready date, and if it is late, by how many days and why, in plain words.
+      If the delivery isn't booked yet, say it will be booked once the piece reaches the warehouse.
+      If a tool says the order wasn't found, say that no order matches that email, and that order numbers start with SO-.
+      Stop once the facts are given. Don't sum them up again, and don't offer to track the order,
+      notify them or do anything else.
+      Never mention tools, systems or slot IDs.
+  reasoning:
+    instructions: ->
+      | {!@request.payload.message.parts[0].text}
+    actions:
+      find_orders: @actions.find_orders
+        with email = @generator.understandRequest.output.email
+      get_order: @actions.get_order
+        with email = @generator.understandRequest.output.email
+    max_number_of_loops: 6
+    max_consecutive_errors: 3
+    task_timeout_secs: 60
+    outputs:
+      properties:
+        reply:
+          type: "string"
+          description: "The reply to send the customer."
+  on_exit: ->
+    transition to @echo.statusReply
+
+echo statusReply:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@orchestrator.orderStatus.output.reply)]})
+
+# -- 3b. RESCHEDULE: the slots read with fixed arguments, the model only fills fields ----
+# No LLM node here writes to the customer before the move. An orchestrator deciding the customer had
+# a choice to make, and a generator writing the list of slots, both stopped the task to wait for the
+# customer, and their reasoning came back as the reply. So the model fills fields, a router decides,
+# and the question comes from an echo.
+executor listSlots:
+  description: "Reads the free slots with fixed arguments. No LLM."
+  label: "List free slots"
+  do: ->
+    run @actions.list_delivery_slots
+      with orderId = @generator.understandRequest.output.orderId
+      with email = @generator.understandRequest.output.email
+  on_exit: ->
+    transition to @generator.pickSlot
+
+generator pickSlot:
+  description: "Matches the customer's preference to the free slots."
+  label: "Pick slot"
+  system:
+    instructions: |
+      You read a delivery service's answer about one order and fill the fields below. Your goal is
+      complete once they are filled, whatever the answer says. You don't talk to the customer and you
+      don't move anything, so you never need more input to finish.
+
+      status:
+      - "not_found": the answer says there is no order with that number for that email.
+      - "cannot_move": the answer says the delivery is less than 48 hours away, or that no delivery is booked.
+      - "ok": the answer gives the current slot and the free slots.
+
+      slotId: the slotId of the one free slot that clearly matches the preference (weekday, date,
+      morning or afternoon). "" when there is no preference, or when several free slots or none match.
+      Only a slotId from freeSlots.
+
+      slots: when status is "ok" and slotId is "", the free slots that match the preference, or every
+      free slot when none match or there is no preference. One per line, written like
+      "Friday 23 October, 08:00-12:00", in the order given. "" otherwise.
+  # The answer and the preference are quoted as data, like the classifier's message.
+  prompt: ->
+    | Fill the fields for this delivery service answer.
+      Preference: """{!@generator.understandRequest.output.preference}"""
+      Answer: """{!@generator.pickSlot.input}"""
+  outputs:
+    properties:
+      status:
+        type: "string"
+        enum:
+          - "ok"
+          - "not_found"
+          - "cannot_move"
+      slotId:
+        type: "string"
+      slots:
+        type: "string"
+  on_exit: ->
+    transition to @router.slotRouter
+
+# A delivery that can't move online becomes a care case, every time.
+router slotRouter:
+  description: "Decides from the fields: not found, a care case, a choice, or the move."
+  routes:
+    - target: @echo.orderNotFound
+      when: @generator.pickSlot.output.status == "not_found"
+      label: "Order not found"
+    - target: @executor.openDeliveryCase
+      when: @generator.pickSlot.output.status == "cannot_move"
+      label: "Can't move"
+    - target: @echo.chooseSlot
+      when: @generator.pickSlot.output.slotId == ""
+      label: "Needs a choice"
+  otherwise:
+    target: @executor.moveDelivery
+
+echo chooseSlot:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart("These delivery slots are free:\n" + @generator.pickSlot.output.slots + "\nWhich one suits you?")]})
+
+executor moveDelivery:
+  description: "Moves the delivery to the picked slot. The System API refuses a slot that isn't free. No LLM."
+  label: "Move delivery"
+  do: ->
+    run @actions.reschedule_delivery
+      with orderId = @generator.understandRequest.output.orderId
+      with email = @generator.understandRequest.output.email
+      with slotId = @generator.pickSlot.output.slotId
+  on_exit: ->
+    transition to @generator.movedReply
+
+generator movedReply:
+  description: "Confirms the move from the tool's answer."
+  label: "Confirm move"
+  system:
+    instructions: |
+      Write the reply that confirms a moved delivery to the customer, from the delivery data: the new
+      weekday, date and time window, in one or two short sentences. If it is an error instead, say
+      plainly that the delivery wasn't moved, and why.
+  prompt: ->
+    | Customer message: {!@request.payload.message.parts[0].text}
+      Delivery data: {!@generator.movedReply.input}
+  on_exit: ->
+    transition to @echo.moved
+
+echo moved:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.movedReply.output)]})
+
+echo orderNotFound:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart("I couldn't find that order for that email address. Please check both (the order number starts with SO-) and send them again.")]})
+
+executor openDeliveryCase:
+  description: "Opens a DELIVERY case with fixed arguments. No LLM."
+  label: "Open delivery case"
+  do: ->
+    run @actions.open_care_case
+      with orderId = @generator.understandRequest.output.orderId
+      with email = @generator.understandRequest.output.email
+      with category = "DELIVERY"
+      with summary = @generator.understandRequest.output.summary
+  on_exit: ->
+    transition to @generator.caseReply
+
+# -- 3c. COMPLAINT: deterministic, the model never decides whether to open it --
+executor openComplaintCase:
+  description: "Opens a care case with the classified category. No LLM."
+  label: "Open care case"
+  do: ->
+    run @actions.open_care_case
+      with orderId = @generator.understandRequest.output.orderId
+      with email = @generator.understandRequest.output.email
+      with category = @generator.understandRequest.output.category
+      with summary = @generator.understandRequest.output.summary
+  on_exit: ->
+    transition to @generator.caseReply
+
+generator caseReply:
+  description: "Confirms the case to the customer from the tool's answer."
+  label: "Confirm case"
+  system:
+    instructions: |
+      Write the reply that confirms a care case to the customer.
+      If the case data has a caseId, give it, say who it is assigned to and when they will hear back,
+      and add one line of empathy. If it is an error instead, say plainly what went wrong and
+      ask them to check their order number and email.
+  prompt: ->
+    | Customer message: {!@request.payload.message.parts[0].text}
+      Case data: {!@generator.caseReply.input}
+  on_exit: ->
+    transition to @echo.caseOpened
+
+echo caseOpened:
+  kind: "a2a:status_update_event"
+  state: "TASK_STATE_COMPLETED"
+  message: a2a.message({messageId: uuid(), parts: [a2a.textPart(@generator.caseReply.output)]})

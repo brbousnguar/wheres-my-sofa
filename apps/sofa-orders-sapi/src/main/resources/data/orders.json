@@ -1,0 +1,174 @@
+{
+  "_comment": "Invented demo data. Dates are day offsets from today, so the story never ages: -49 means 49 days ago, 12 means in 12 days.",
+  "orders": [
+    {
+      "orderId": "SO-24817",
+      "customer": { "name": "Camille Martin", "email": "camille.martin@example.com" },
+      "orderedOn": -49,
+      "store": "Nantes",
+      "status": "IN_PRODUCTION",
+      "lines": [
+        {
+          "lineId": 1,
+          "product": "Lune 3-seater sofa",
+          "options": "Bouclé fabric, ivory",
+          "madeToOrder": true,
+          "status": "IN_PRODUCTION",
+          "production": {
+            "supplierOrder": "PO-77120",
+            "workshop": "Upholstery workshop, Porto",
+            "stagesDone": ["FABRIC_RECEIVED", "FRAME_BUILT"],
+            "currentStage": "UPHOLSTERY",
+            "stagesLeft": ["QUALITY_CHECK", "SHIPPED_TO_WAREHOUSE"],
+            "promisedReadyOn": 14,
+            "estimatedReadyOn": 28,
+            "delayReason": "The ivory bouclé reached the workshop two weeks later than planned."
+          }
+        },
+        {
+          "lineId": 2,
+          "product": "Orbe coffee table",
+          "options": "Smoked oak",
+          "madeToOrder": false,
+          "status": "DELIVERED",
+          "deliveredOn": -30
+        }
+      ],
+      "delivery": {
+        "status": "NOT_BOOKED",
+        "note": "The delivery is booked once the sofa reaches our warehouse."
+      }
+    },
+    {
+      "orderId": "SO-25012",
+      "customer": { "name": "Camille Martin", "email": "camille.martin@example.com" },
+      "orderedOn": -6,
+      "store": "Online",
+      "status": "CONFIRMED",
+      "lines": [
+        {
+          "lineId": 1,
+          "product": "Halo bench",
+          "options": "Natural ash, 160 cm",
+          "madeToOrder": true,
+          "status": "AWAITING_PRODUCTION",
+          "production": {
+            "supplierOrder": "PO-77391",
+            "workshop": "Joinery workshop, Lyon",
+            "stagesDone": [],
+            "currentStage": "SCHEDULED",
+            "stagesLeft": ["WOOD_CUT", "ASSEMBLY", "FINISHING", "QUALITY_CHECK", "SHIPPED_TO_WAREHOUSE"],
+            "promisedReadyOn": 42,
+            "estimatedReadyOn": 42
+          }
+        }
+      ],
+      "delivery": {
+        "status": "NOT_BOOKED",
+        "note": "The delivery is booked once the bench reaches our warehouse."
+      }
+    },
+    {
+      "orderId": "SO-24903",
+      "customer": { "name": "Julien Bernard", "email": "julien.bernard@example.com" },
+      "orderedOn": -63,
+      "store": "Paris Rive Gauche",
+      "status": "READY_FOR_DELIVERY",
+      "lines": [
+        {
+          "lineId": 1,
+          "product": "Pli armchair",
+          "options": "Cognac leather",
+          "quantity": 2,
+          "madeToOrder": true,
+          "status": "IN_WAREHOUSE",
+          "production": {
+            "supplierOrder": "PO-76854",
+            "workshop": "Leather workshop, Tuscany",
+            "stagesDone": ["LEATHER_CUT", "FRAME_BUILT", "UPHOLSTERY", "QUALITY_CHECK", "SHIPPED_TO_WAREHOUSE"],
+            "currentStage": "DONE",
+            "stagesLeft": [],
+            "promisedReadyOn": -4,
+            "estimatedReadyOn": -4
+          }
+        }
+      ],
+      "delivery": {
+        "status": "BOOKED",
+        "slot": { "slotId": "D5-AM", "date": 5, "window": "08:00-12:00" },
+        "address": "Paris 7e",
+        "availableSlots": [
+          { "slotId": "D7-PM", "date": 7, "window": "13:00-17:00" },
+          { "slotId": "D8-AM", "date": 8, "window": "08:00-12:00" },
+          { "slotId": "D12-AM", "date": 12, "window": "08:00-12:00" },
+          { "slotId": "D14-PM", "date": 14, "window": "13:00-17:00" }
+        ]
+      }
+    },
+    {
+      "orderId": "SO-24770",
+      "customer": { "name": "Léa Dubois", "email": "lea.dubois@example.com" },
+      "orderedOn": -71,
+      "store": "Bordeaux",
+      "status": "OUT_FOR_DELIVERY",
+      "lines": [
+        {
+          "lineId": 1,
+          "product": "Nuage bed, 160 x 200",
+          "options": "Linen headboard, sand",
+          "madeToOrder": true,
+          "status": "IN_TRANSIT",
+          "production": {
+            "supplierOrder": "PO-76512",
+            "workshop": "Upholstery workshop, Porto",
+            "stagesDone": ["FABRIC_RECEIVED", "FRAME_BUILT", "UPHOLSTERY", "QUALITY_CHECK", "SHIPPED_TO_WAREHOUSE"],
+            "currentStage": "DONE",
+            "stagesLeft": [],
+            "promisedReadyOn": -9,
+            "estimatedReadyOn": -9
+          }
+        }
+      ],
+      "delivery": {
+        "status": "BOOKED",
+        "slot": { "slotId": "D1-PM", "date": 1, "window": "13:00-17:00" },
+        "address": "Bordeaux Chartrons",
+        "availableSlots": [
+          { "slotId": "D6-AM", "date": 6, "window": "08:00-12:00" },
+          { "slotId": "D9-PM", "date": 9, "window": "13:00-17:00" }
+        ]
+      }
+    },
+    {
+      "orderId": "SO-24655",
+      "customer": { "name": "Sofia Rossi", "email": "sofia.rossi@example.com" },
+      "orderedOn": -88,
+      "store": "Lyon",
+      "status": "DELIVERED",
+      "lines": [
+        {
+          "lineId": 1,
+          "product": "Halo dining table, 220 cm",
+          "options": "Ceramic top, travertine look",
+          "madeToOrder": true,
+          "status": "DELIVERED",
+          "deliveredOn": -7,
+          "production": {
+            "supplierOrder": "PO-76201",
+            "workshop": "Joinery workshop, Lyon",
+            "stagesDone": ["WOOD_CUT", "ASSEMBLY", "FINISHING", "QUALITY_CHECK", "SHIPPED_TO_WAREHOUSE"],
+            "currentStage": "DONE",
+            "stagesLeft": [],
+            "promisedReadyOn": -20,
+            "estimatedReadyOn": -20
+          }
+        }
+      ],
+      "delivery": {
+        "status": "DELIVERED",
+        "deliveredOn": -7,
+        "address": "Lyon 6e"
+      }
+    }
+  ]
+}

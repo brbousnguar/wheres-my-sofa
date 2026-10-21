@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Where's my sofa?</title>
+<style>
+  :root {
+    --bg: #f1ede6;
+    --panel: #fbf9f5;
+    --ink: #23211d;
+    --muted: #6d675e;
+    --line: #e0d9ce;
+    --green: #2f4a3a;
+    --green-soft: #e4ebe5;
+    --clay: #a4532b;
+    --clay-soft: #f6e4d8;
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--ink); font: 15px/1.45 var(--font); display: flex; flex-direction: column; }
+
+  header { display: flex; align-items: center; gap: 24px; padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .brand h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
+  .brand p { margin: 1px 0 0; color: var(--muted); font-size: 13px; }
+  .path { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .path span { padding: 4px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); transition: background .25s, color .25s, border-color .25s; }
+  .path i { font-style: normal; opacity: .6; }
+  .path span.on { background: var(--green); border-color: var(--green); color: #fff; }
+
+  main { flex: 1; display: grid; grid-template-columns: 1.25fr 1fr; min-height: 0; }
+
+  .chat { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
+  .log { position: relative; flex: 1; overflow-y: auto; padding: 20px 28px 8px; display: flex; flex-direction: column; gap: 12px; scroll-behavior: smooth; }
+  .divider { align-self: center; font-size: 12px; color: var(--muted); padding: 3px 12px; border: 1px solid var(--line); border-radius: 99px; background: var(--panel); margin: 6px 0; }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 10px; white-space: pre-wrap; }
+  .msg.you { align-self: flex-end; background: var(--ink); color: #f6f2ea; border-bottom-right-radius: 3px; }
+  .msg.desk { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); border-bottom-left-radius: 3px; }
+  .msg.desk .who { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; color: var(--green); font-weight: 600; margin-bottom: 3px; }
+  .msg.desk .who em { font-style: normal; font-weight: 400; color: var(--muted); }
+  .msg.wait { color: var(--muted); font-style: italic; }
+  .msg.error { border-color: var(--clay); color: var(--clay); }
+  form { display: flex; gap: 10px; padding: 14px 28px 20px; }
+  input { flex: 1; font: inherit; padding: 11px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: var(--ink); }
+  input:focus { outline: 2px solid var(--green); outline-offset: -1px; }
+  button { font: inherit; font-weight: 600; padding: 0 18px; border: 0; border-radius: 8px; background: var(--green); color: #fff; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; color: var(--green); border: 1px solid var(--line); }
+
+  .system { overflow-y: auto; padding: 20px 24px; display: flex; flex-direction: column; gap: 18px; }
+  .system h2 { margin: 0; font-size: 15px; }
+  .system .sub { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+  h3 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+  .row { display: grid; grid-template-columns: 78px 1fr auto; gap: 10px; align-items: baseline; padding: 8px 10px; border-bottom: 1px solid var(--line); font-size: 13px; transition: background .4s; }
+  .row:last-child { border-bottom: 0; }
+  .row b { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .row .what { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .when { text-align: right; font-variant-numeric: tabular-nums; }
+  .row .when s { color: var(--muted); margin-right: 6px; }
+  .row.changed { background: var(--clay-soft); }
+  .row.changed .when { color: var(--clay); font-weight: 600; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+  .empty { padding: 10px; color: var(--muted); font-size: 13px; }
+  .case { padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  .case:last-child { border-bottom: 0; }
+  .case.changed { background: var(--clay-soft); }
+  .case .top { display: flex; justify-content: space-between; gap: 10px; }
+  .case .tag { font-size: 11px; font-weight: 600; color: var(--clay); }
+  .case p { margin: 3px 0 0; color: var(--muted); }
+  .verdict { padding: 12px 14px; border-radius: 8px; font-size: 13px; background: var(--green-soft); color: var(--green); }
+  .verdict.moved { background: var(--clay-soft); color: var(--clay); }
+  .verdict ul { margin: 0; padding-left: 18px; }
+
+  /* Phone width: the chat on top, and only what changed in the system below it. */
+  @media (max-width: 700px) {
+    body { font-size: 14px; }
+    header { padding: 10px 16px; }
+    .brand h1 { font-size: 17px; }
+    .path, .system > div:not(:last-child) { display: none; }
+    main { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+    .chat { border-right: 0; }
+    .log { padding: 14px 16px 6px; gap: 10px; }
+    .msg { max-width: 90%; padding: 8px 12px; }
+    form { padding: 8px 16px 12px; }
+    input { padding: 9px 12px; }
+    .system { padding: 10px 16px 14px; border-top: 1px solid var(--line); overflow: visible; }
+    .verdict { padding: 9px 12px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1>Where's my sofa?</h1>
+    <p>Care Desk agent · MuleSoft Agent Fabric · CloudHub 2.0</p>
+  </div>
+  <div class="path" id="path">
+    <span>A2A client</span><i>→</i><span>Omni Gateway</span><i>→</i><span>Agent Script broker</span><i>→</i><span>MCP server</span><i>→</i><span>System API</span>
+  </div>
+</header>
+<main>
+  <section class="chat">
+    <div class="log" id="log"></div>
+    <form id="form">
+      <input id="text" autocomplete="off" placeholder="Write to the care desk…">
+      <button id="send">Send</button>
+      <button type="button" class="ghost" id="restart" title="Start a new conversation">New</button>
+    </form>
+  </section>
+  <section class="system">
+    <div>
+      <h2>System of record</h2>
+      <p class="sub">sofa-orders-sapi, read live after every message</p>
+    </div>
+    <div>
+      <h3>Deliveries</h3>
+      <div class="card" id="orders"></div>
+    </div>
+    <div>
+      <h3>Care cases</h3>
+      <div class="card" id="cases"></div>
+    </div>
+    <div>
+      <h3>What the last message changed</h3>
+      <div class="verdict" id="verdict">Nothing sent yet.</div>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let contextId = null;
+let current = null;
+let busy = false;
+
+const days = { Monday: "Mon", Tuesday: "Tue", Wednesday: "Wed", Thursday: "Thu", Friday: "Fri", Saturday: "Sat", Sunday: "Sun" };
+const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function slotText(slot, delivery) {
+  if (!slot) return delivery === "DELIVERED" ? "Delivered" : "Not booked";
+  const [, m, d] = slot.date.split("-");
+  const part = slot.window.startsWith("08") ? "morning" : "afternoon";
+  return `${days[slot.weekday]} ${+d} ${months[m - 1]}, ${part}`;
+}
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function render(state, before) {
+  const was = Object.fromEntries((before?.orders || []).map((o) => [o.orderId, o]));
+  $("orders").innerHTML = state.orders.map((o) => {
+    const old = was[o.orderId];
+    const moved = old && (old.slot?.slotId || null) !== (o.slot?.slotId || null);
+    return `<div class="row${moved ? " changed" : ""}">
+      <b>${o.orderId}</b>
+      <span class="what">${esc(o.customer.split(" ")[0])} · ${esc(o.items)}</span>
+      <span class="when">${moved ? `<s>${slotText(old.slot, old.delivery)}</s>` : ""}${slotText(o.slot, o.delivery)}</span>
+    </div>`;
+  }).join("");
+  const known = before ? before.cases.length : state.cases.length;
+  $("cases").innerHTML = state.cases.length ? state.cases.map((c, i) => `
+    <div class="case${i >= known ? " changed" : ""}">
+      <div class="top"><b>${c.caseId} · ${c.category}</b><span class="tag">${i >= known ? "NEW" : c.status}</span></div>
+      <p>${c.orderId} · ${esc(c.assignedTo)} · reply within ${esc(c.replyWithin)}</p>
+    </div>`).join("") : `<div class="empty">No case open.</div>`;
+}
+
+function verdict(before, after) {
+  const changes = [];
+  const was = Object.fromEntries(before.orders.map((o) => [o.orderId, o]));
+  for (const o of after.orders) {
+    const old = was[o.orderId];
+    if ((old.slot?.slotId || null) !== (o.slot?.slotId || null))
+      changes.push(`${o.orderId}: delivery moved from ${slotText(old.slot, old.delivery)} to ${slotText(o.slot, o.delivery)}`);
+  }
+  for (const c of after.cases.slice(before.cases.length))
+    changes.push(`${c.caseId} opened: ${c.category} for ${c.orderId}, ${c.assignedTo}`);
+  $("verdict").className = "verdict" + (changes.length ? " moved" : "");
+  $("verdict").innerHTML = changes.length ? `<ul>${changes.map((c) => `<li>${esc(c)}</li>`).join("")}</ul>` : "Nothing changed in the system.";
+}
+
+async function loadState() {
+  const r = await fetch("/api/state");
+  return r.json();
+}
+
+function add(cls, html) {
+  const el = document.createElement("div");
+  el.className = cls;
+  el.innerHTML = html;
+  $("log").appendChild(el);
+  $("log").scrollTop = $("log").scrollHeight;
+  return el;
+}
+
+function lightPath(on) {
+  const steps = [...$("path").querySelectorAll("span")];
+  clearInterval(lightPath.timer);
+  steps.forEach((s) => s.classList.remove("on"));
+  if (!on) return;
+  let i = 0;
+  lightPath.timer = setInterval(() => {
+    steps.forEach((s, j) => s.classList.toggle("on", j === i % steps.length));
+    i++;
+  }, 450);
+}
+
+async function ask(text) {
+  if (busy || !text.trim()) return;
+  busy = true;
+  $("send").disabled = true;
+  const asked = add("msg you", esc(text));
+  const wait = add("msg desk wait", "Care Desk is working… 0 s");
+  const started = Date.now();
+  const tick = setInterval(() => { wait.textContent = `Care Desk is working… ${Math.round((Date.now() - started) / 1000)} s`; }, 500);
+  lightPath(true);
+  const before = current;
+  try {
+    const r = await fetch("/api/ask", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text, contextId }) });
+    const data = await r.json();
+    clearInterval(tick);
+    if (!r.ok) throw new Error(data.error);
+    contextId = data.contextId;
+    wait.className = "msg desk";
+    wait.innerHTML = `<div class="who">Care Desk <em>${data.seconds} s</em></div>${esc(data.reply)}`;
+    $("log").scrollTop = asked.offsetTop - 12;
+    current = await loadState();
+    render(current, before);
+    verdict(before, current);
+  } catch (e) {
+    wait.className = "msg desk error";
+    wait.textContent = `Something went wrong: ${e.message}`;
+  } finally {
+    clearInterval(tick);
+    lightPath(false);
+    busy = false;
+    $("send").disabled = false;
+  }
+}
+
+function newConversation(name) {
+  contextId = null;
+  add("divider", esc(name ? `${name} · new conversation` : "New conversation"));
+}
+
+$("form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = $("text").value;
+  $("text").value = "";
+  ask(text);
+});
+$("restart").addEventListener("click", () => newConversation());
+
+// The recording script drives the page through these.
+window.demo = { newConversation, isBusy: () => busy, tour: (ms) => { lightPath(true); setTimeout(() => lightPath(false), ms); } };
+
+loadState().then((s) => { current = s; render(s); });
+</script>
+</body>
+</html>

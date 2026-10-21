@@ -1,0 +1,8 @@
+# Local defaults. scripts/deploy-apps.sh overrides them on CloudHub 2.0
+# (port 8081 there, and the key as a secure property).
+sapi:
+  port: "8720"
+
+# Shared key the MCP server sends in x-api-key.
+api:
+  key: "local-dev-key"
